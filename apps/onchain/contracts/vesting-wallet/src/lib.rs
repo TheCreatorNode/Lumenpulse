@@ -2,6 +2,7 @@
 
 mod errors;
 mod events;
+mod reentrancy_guard;
 mod storage;
 mod token;
 
@@ -62,149 +63,167 @@ impl VestingWalletContract {
         start_time: u64,
         duration: u64,
     ) -> Result<(), VestingError> {
-        // Check if contract is initialized
-        let stored_admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(VestingError::NotInitialized)?;
-
-        // Verify admin identity
-        if admin != stored_admin {
-            return Err(VestingError::Unauthorized);
+        if !reentrancy_guard::lock(&env) {
+            return Err(VestingError::ReentrancyDetected);
         }
 
-        // Require admin authorization
-        admin.require_auth();
+        let result = (|| {
+            // Check if contract is initialized
+            let stored_admin: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::Admin)
+                .ok_or(VestingError::NotInitialized)?;
 
-        // Validate amount
-        if amount <= 0 {
-            return Err(VestingError::InvalidAmount);
-        }
-
-        // Validate duration
-        if duration == 0 {
-            return Err(VestingError::InvalidDuration);
-        }
-
-        // Validate start time (should be in the future or current time)
-        let current_time = env.ledger().timestamp();
-        if start_time < current_time {
-            return Err(VestingError::InvalidStartTime);
-        }
-
-        // Get token address
-        let token: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Token)
-            .ok_or(VestingError::NotInitialized)?;
-
-        let contract_address = env.current_contract_address();
-
-        // If vesting already exists, return remaining tokens to admin
-        // (total_amount - claimed_amount)
-        if let Some(existing_vesting) = env
-            .storage()
-            .persistent()
-            .get::<_, VestingData>(&DataKey::Vesting(beneficiary.clone()))
-        {
-            let remaining = existing_vesting.total_amount - existing_vesting.claimed_amount;
-            if remaining > 0 {
-                transfer(&env, &token, &contract_address, &admin, &remaining);
+            // Verify admin identity
+            if admin != stored_admin {
+                return Err(VestingError::Unauthorized);
             }
-        }
 
-        // Transfer tokens from admin to contract
-        transfer(&env, &token, &admin, &contract_address, &amount);
+            // Require admin authorization
+            admin.require_auth();
 
-        // Create vesting data
-        let vesting = VestingData {
-            beneficiary: beneficiary.clone(),
-            total_amount: amount,
-            start_time,
-            duration,
-            claimed_amount: 0,
-        };
+            // Validate amount
+            if amount <= 0 {
+                return Err(VestingError::InvalidAmount);
+            }
 
-        // Store vesting data
-        env.storage()
-            .persistent()
-            .set(&DataKey::Vesting(beneficiary), &vesting);
+            // Validate duration
+            if duration == 0 {
+                return Err(VestingError::InvalidDuration);
+            }
 
-        // Emit VestingCreated event
-        events::VestingCreatedEvent {
-            beneficiary: vesting.beneficiary.clone(),
-            amount: vesting.total_amount,
-            start_time: vesting.start_time,
-            duration: vesting.duration,
-        }
-        .publish(&env);
+            // Validate start time (should be in the future or current time)
+            let current_time = env.ledger().timestamp();
+            if start_time < current_time {
+                return Err(VestingError::InvalidStartTime);
+            }
 
-        Ok(())
+            // Get token address
+            let token: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::Token)
+                .ok_or(VestingError::NotInitialized)?;
+
+            let contract_address = env.current_contract_address();
+
+            // If vesting already exists, return remaining tokens to admin
+            // (total_amount - claimed_amount)
+            if let Some(existing_vesting) = env
+                .storage()
+                .persistent()
+                .get::<_, VestingData>(&DataKey::Vesting(beneficiary.clone()))
+            {
+                let remaining = existing_vesting.total_amount - existing_vesting.claimed_amount;
+                if remaining > 0 {
+                    transfer(&env, &token, &contract_address, &admin, &remaining);
+                }
+            }
+
+            // Transfer tokens from admin to contract
+            transfer(&env, &token, &admin, &contract_address, &amount);
+
+            // Create vesting data
+            let vesting = VestingData {
+                beneficiary: beneficiary.clone(),
+                total_amount: amount,
+                start_time,
+                duration,
+                claimed_amount: 0,
+            };
+
+            // Store vesting data
+            env.storage()
+                .persistent()
+                .set(&DataKey::Vesting(beneficiary), &vesting);
+
+            // Emit VestingCreated event
+            events::VestingCreatedEvent {
+                beneficiary: vesting.beneficiary.clone(),
+                amount: vesting.total_amount,
+                start_time: vesting.start_time,
+                duration: vesting.duration,
+            }
+            .publish(&env);
+
+            Ok(())
+        })();
+
+        reentrancy_guard::unlock(&env);
+        result
     }
 
     /// Claim available tokens based on linear vesting schedule
     pub fn claim(env: Env, beneficiary: Address) -> Result<i128, VestingError> {
-        // Check if contract is initialized
-        if !env.storage().instance().has(&DataKey::Admin) {
-            return Err(VestingError::NotInitialized);
+        if !reentrancy_guard::lock(&env) {
+            return Err(VestingError::ReentrancyDetected);
         }
 
-        // Require beneficiary authorization
-        beneficiary.require_auth();
+        let result = (|| {
+            // Check if contract is initialized
+            if !env.storage().instance().has(&DataKey::Admin) {
+                return Err(VestingError::NotInitialized);
+            }
 
-        // Get vesting data
-        let mut vesting: VestingData = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Vesting(beneficiary.clone()))
-            .ok_or(VestingError::VestingNotFound)?;
+            // Require beneficiary authorization
+            beneficiary.require_auth();
 
-        // Get current time
-        let current_time = env.ledger().timestamp();
+            // Get vesting data
+            let mut vesting: VestingData = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Vesting(beneficiary.clone()))
+                .ok_or(VestingError::VestingNotFound)?;
 
-        // Calculate available amount using the helper function
-        let available_amount = Self::calculate_claimable_amount(current_time, &vesting);
+            // Get current time
+            let current_time = env.ledger().timestamp();
 
-        // Check if there's anything to claim
-        if available_amount <= 0 {
-            return Err(VestingError::NothingToClaim);
-        }
+            // Calculate available amount using the helper function
+            let available_amount = Self::calculate_claimable_amount(current_time, &vesting);
 
-        // Get token address
-        let token: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Token)
-            .ok_or(VestingError::NotInitialized)?;
+            // Check if there's anything to claim
+            if available_amount <= 0 {
+                return Err(VestingError::NothingToClaim);
+            }
 
-        // Transfer tokens from contract to beneficiary
-        let contract_address = env.current_contract_address();
-        transfer(
-            &env,
-            &token,
-            &contract_address,
-            &beneficiary,
-            &available_amount,
-        );
+            // Get token address
+            let token: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::Token)
+                .ok_or(VestingError::NotInitialized)?;
 
-        // Update claimed amount
-        vesting.claimed_amount += available_amount;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Vesting(beneficiary), &vesting);
+            // Transfer tokens from contract to beneficiary
+            let contract_address = env.current_contract_address();
+            transfer(
+                &env,
+                &token,
+                &contract_address,
+                &beneficiary,
+                &available_amount,
+            );
 
-        // Emit TokensClaimed event
-        let remaining = vesting.total_amount - vesting.claimed_amount;
-        events::TokensClaimedEvent {
-            beneficiary: vesting.beneficiary.clone(),
-            amount_claimed: available_amount,
-            remaining,
-        }
-        .publish(&env);
+            // Update claimed amount
+            vesting.claimed_amount += available_amount;
+            env.storage()
+                .persistent()
+                .set(&DataKey::Vesting(beneficiary), &vesting);
 
-        Ok(available_amount)
+            // Emit TokensClaimed event
+            let remaining = vesting.total_amount - vesting.claimed_amount;
+            events::TokensClaimedEvent {
+                beneficiary: vesting.beneficiary.clone(),
+                amount_claimed: available_amount,
+                remaining,
+            }
+            .publish(&env);
+
+            Ok(available_amount)
+        })();
+
+        reentrancy_guard::unlock(&env);
+        result
     }
 
     /// Get the claimable amount for a beneficiary without modifying state
@@ -324,3 +343,6 @@ impl VestingWalletContract {
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod test_reentrancy;

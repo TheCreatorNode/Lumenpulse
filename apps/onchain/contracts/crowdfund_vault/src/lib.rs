@@ -3,6 +3,7 @@
 mod errors;
 mod events;
 mod math;
+mod reentrancy_guard;
 mod storage;
 mod token;
 
@@ -192,63 +193,72 @@ impl CrowdfundVaultContract {
         project_id: u64,
         caller: Address,
     ) -> Result<(), CrowdfundError> {
-        caller.require_auth();
-        let project: ProjectData = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Project(project_id))
-            .ok_or(CrowdfundError::ProjectNotFound)?;
-
-        if project.is_active {
-            return Err(CrowdfundError::ProjectNotCancellable);
+        if !reentrancy_guard::lock(&env) {
+            return Err(CrowdfundError::ReentrancyDetected);
         }
 
-        let status: Symbol = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ProjectStatus(project_id))
-            .unwrap_or(Symbol::new(&env, "ACTIVE"));
-
-        if status != Symbol::new(&env, "CANCELED") {
-            return Err(CrowdfundError::ProjectNotCancellable);
-        }
-
-        let count_key = DataKey::ContributorCount(project_id);
-        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
-
-        let contract_address = env.current_contract_address();
-        let token_client = TokenClient::new(&env, &project.token_address);
-
-        for i in 0..count {
-            let contrib_key = DataKey::Contributor(project_id, i);
-            let contributor: Address = env
+        let result = (|| {
+            caller.require_auth();
+            let project: ProjectData = env
                 .storage()
                 .persistent()
-                .get(&contrib_key)
+                .get(&DataKey::Project(project_id))
                 .ok_or(CrowdfundError::ProjectNotFound)?;
 
-            let amount_key = DataKey::Contribution(project_id, contributor.clone());
-            let amount: i128 = env.storage().persistent().get(&amount_key).unwrap_or(0);
-
-            if amount > 0 {
-                token_client.transfer(&contract_address, &contributor, &amount);
-
-                env.storage().persistent().remove(&amount_key);
-
-                events::ContributionRefundedEvent {
-                    project_id,
-                    contributor,
-                    amount,
-                }
-                .publish(&env);
+            if project.is_active {
+                return Err(CrowdfundError::ProjectNotCancellable);
             }
-        }
 
-        env.storage().persistent().remove(&count_key);
-        let balance_key = DataKey::ProjectBalance(project_id, project.token_address);
-        env.storage().persistent().set(&balance_key, &0i128);
+            let status: Symbol = env
+                .storage()
+                .persistent()
+                .get(&DataKey::ProjectStatus(project_id))
+                .unwrap_or(Symbol::new(&env, "ACTIVE"));
 
-        Ok(())
+            if status != Symbol::new(&env, "CANCELED") {
+                return Err(CrowdfundError::ProjectNotCancellable);
+            }
+
+            let count_key = DataKey::ContributorCount(project_id);
+            let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+
+            let contract_address = env.current_contract_address();
+            let token_client = TokenClient::new(&env, &project.token_address);
+
+            for i in 0..count {
+                let contrib_key = DataKey::Contributor(project_id, i);
+                let contributor: Address = env
+                    .storage()
+                    .persistent()
+                    .get(&contrib_key)
+                    .ok_or(CrowdfundError::ProjectNotFound)?;
+
+                let amount_key = DataKey::Contribution(project_id, contributor.clone());
+                let amount: i128 = env.storage().persistent().get(&amount_key).unwrap_or(0);
+
+                if amount > 0 {
+                    token_client.transfer(&contract_address, &contributor, &amount);
+
+                    env.storage().persistent().remove(&amount_key);
+
+                    events::ContributionRefundedEvent {
+                        project_id,
+                        contributor,
+                        amount,
+                    }
+                    .publish(&env);
+                }
+            }
+
+            env.storage().persistent().remove(&count_key);
+            let balance_key = DataKey::ProjectBalance(project_id, project.token_address);
+            env.storage().persistent().set(&balance_key, &0i128);
+
+            Ok(())
+        })();
+
+        reentrancy_guard::unlock(&env);
+        result
     }
 
     /// Deposit funds into a project
@@ -258,109 +268,118 @@ impl CrowdfundVaultContract {
         project_id: u64,
         amount: i128,
     ) -> Result<(), CrowdfundError> {
-        // Check if contract is initialized
-        if !env.storage().instance().has(&DataKey::Admin) {
-            return Err(CrowdfundError::NotInitialized);
+        if !reentrancy_guard::lock(&env) {
+            return Err(CrowdfundError::ReentrancyDetected);
         }
 
-        // Require user authorization
-        user.require_auth();
+        let result = (|| {
+            // Check if contract is initialized
+            if !env.storage().instance().has(&DataKey::Admin) {
+                return Err(CrowdfundError::NotInitialized);
+            }
 
-        // Check Emergency Pause State (single read)
-        let is_paused: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::Paused)
-            .unwrap_or(false);
-        if is_paused {
-            return Err(CrowdfundError::ContractPaused);
-        }
+            // Require user authorization
+            user.require_auth();
 
-        // Validate amount
-        if amount <= 0 {
-            return Err(CrowdfundError::InvalidAmount);
-        }
+            // Check Emergency Pause State (single read)
+            let is_paused: bool = env
+                .storage()
+                .instance()
+                .get(&DataKey::Paused)
+                .unwrap_or(false);
+            if is_paused {
+                return Err(CrowdfundError::ContractPaused);
+            }
 
-        // Get project
-        let mut project: ProjectData = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Project(project_id))
-            .ok_or(CrowdfundError::ProjectNotFound)?;
+            // Validate amount
+            if amount <= 0 {
+                return Err(CrowdfundError::InvalidAmount);
+            }
 
-        // Check if project is active
-        if !project.is_active {
-            return Err(CrowdfundError::ProjectNotActive);
-        }
-
-        // Transfer tokens from user to contract if they have sufficient balance
-        let contract_address = env.current_contract_address();
-        let user_balance = token::balance(&env, &project.token_address, &user);
-        if user_balance >= amount {
-            token::transfer(
-                &env,
-                &project.token_address,
-                &user,
-                &contract_address,
-                &amount,
-            );
-        }
-
-        // Construct balance key once and reuse
-        let balance_key = DataKey::ProjectBalance(project_id, project.token_address.clone());
-        let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&balance_key, &(current_balance + amount));
-
-        // Track individual contribution for quadratic funding
-        let contribution_key = DataKey::Contribution(project_id, user.clone());
-        let current_contribution: i128 = env
-            .storage()
-            .persistent()
-            .get(&contribution_key)
-            .unwrap_or(0);
-
-        // If this is a new contributor, add them to the contributors list
-        if current_contribution == 0 {
-            let contributor_count_key = DataKey::ContributorCount(project_id);
-            let contributor_count: u32 = env
+            // Get project
+            let mut project: ProjectData = env
                 .storage()
                 .persistent()
-                .get(&contributor_count_key)
+                .get(&DataKey::Project(project_id))
+                .ok_or(CrowdfundError::ProjectNotFound)?;
+
+            // Check if project is active
+            if !project.is_active {
+                return Err(CrowdfundError::ProjectNotActive);
+            }
+
+            // Transfer tokens from user to contract if they have sufficient balance
+            let contract_address = env.current_contract_address();
+            let user_balance = token::balance(&env, &project.token_address, &user);
+            if user_balance >= amount {
+                token::transfer(
+                    &env,
+                    &project.token_address,
+                    &user,
+                    &contract_address,
+                    &amount,
+                );
+            }
+
+            // Construct balance key once and reuse
+            let balance_key = DataKey::ProjectBalance(project_id, project.token_address.clone());
+            let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
+            env.storage()
+                .persistent()
+                .set(&balance_key, &(current_balance + amount));
+
+            // Track individual contribution for quadratic funding
+            let contribution_key = DataKey::Contribution(project_id, user.clone());
+            let current_contribution: i128 = env
+                .storage()
+                .persistent()
+                .get(&contribution_key)
                 .unwrap_or(0);
 
-            // Store contributor at index
+            // If this is a new contributor, add them to the contributors list
+            if current_contribution == 0 {
+                let contributor_count_key = DataKey::ContributorCount(project_id);
+                let contributor_count: u32 = env
+                    .storage()
+                    .persistent()
+                    .get(&contributor_count_key)
+                    .unwrap_or(0);
+
+                // Store contributor at index
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Contributor(project_id, contributor_count), &user);
+
+                // Increment contributor count
+                env.storage()
+                    .persistent()
+                    .set(&contributor_count_key, &(contributor_count + 1));
+            }
+
+            // Update contribution amount
             env.storage()
                 .persistent()
-                .set(&DataKey::Contributor(project_id, contributor_count), &user);
+                .set(&contribution_key, &(current_contribution + amount));
 
-            // Increment contributor count
+            // Update project total deposited
+            project.total_deposited += amount;
             env.storage()
                 .persistent()
-                .set(&contributor_count_key, &(contributor_count + 1));
-        }
+                .set(&DataKey::Project(project_id), &project);
 
-        // Update contribution amount
-        env.storage()
-            .persistent()
-            .set(&contribution_key, &(current_contribution + amount));
+            // Emit deposit event
+            events::DepositEvent {
+                user,
+                project_id,
+                amount,
+            }
+            .publish(&env);
 
-        // Update project total deposited
-        project.total_deposited += amount;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Project(project_id), &project);
+            Ok(())
+        })();
 
-        // Emit deposit event
-        events::DepositEvent {
-            user,
-            project_id,
-            amount,
-        }
-        .publish(&env);
-
-        Ok(())
+        reentrancy_guard::unlock(&env);
+        result
     }
 
     /// Approve milestone for a project (admin only)
@@ -401,90 +420,99 @@ impl CrowdfundVaultContract {
 
     /// Withdraw funds from a project (owner only, requires milestone approval)
     pub fn withdraw(env: Env, project_id: u64, amount: i128) -> Result<(), CrowdfundError> {
-        // Check if contract is initialized
-        if !env.storage().instance().has(&DataKey::Admin) {
-            return Err(CrowdfundError::NotInitialized);
+        if !reentrancy_guard::lock(&env) {
+            return Err(CrowdfundError::ReentrancyDetected);
         }
 
-        // Check Emergency Pause State (single read)
-        let is_paused: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::Paused)
-            .unwrap_or(false);
-        if is_paused {
-            return Err(CrowdfundError::ContractPaused);
-        }
+        let result = (|| {
+            // Check if contract is initialized
+            if !env.storage().instance().has(&DataKey::Admin) {
+                return Err(CrowdfundError::NotInitialized);
+            }
 
-        // Get project
-        let mut project: ProjectData = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Project(project_id))
-            .ok_or(CrowdfundError::ProjectNotFound)?;
+            // Check Emergency Pause State (single read)
+            let is_paused: bool = env
+                .storage()
+                .instance()
+                .get(&DataKey::Paused)
+                .unwrap_or(false);
+            if is_paused {
+                return Err(CrowdfundError::ContractPaused);
+            }
 
-        // Require owner authorization
-        project.owner.require_auth();
+            // Get project
+            let mut project: ProjectData = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Project(project_id))
+                .ok_or(CrowdfundError::ProjectNotFound)?;
 
-        // Check if project is active
-        if !project.is_active {
-            return Err(CrowdfundError::ProjectNotActive);
-        }
+            // Require owner authorization
+            project.owner.require_auth();
 
-        // Validate amount
-        if amount <= 0 {
-            return Err(CrowdfundError::InvalidAmount);
-        }
+            // Check if project is active
+            if !project.is_active {
+                return Err(CrowdfundError::ProjectNotActive);
+            }
 
-        // Check milestone approval
-        let is_approved: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKey::MilestoneApproved(project_id))
-            .unwrap_or(false);
+            // Validate amount
+            if amount <= 0 {
+                return Err(CrowdfundError::InvalidAmount);
+            }
 
-        if !is_approved {
-            return Err(CrowdfundError::MilestoneNotApproved);
-        }
+            // Check milestone approval
+            let is_approved: bool = env
+                .storage()
+                .persistent()
+                .get(&DataKey::MilestoneApproved(project_id))
+                .unwrap_or(false);
 
-        // Construct balance key once
-        let balance_key = DataKey::ProjectBalance(project_id, project.token_address.clone());
-        let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
+            if !is_approved {
+                return Err(CrowdfundError::MilestoneNotApproved);
+            }
 
-        if current_balance < amount {
-            return Err(CrowdfundError::InsufficientBalance);
-        }
+            // Construct balance key once
+            let balance_key = DataKey::ProjectBalance(project_id, project.token_address.clone());
+            let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
 
-        // Transfer tokens from contract to owner
-        let contract_address = env.current_contract_address();
-        token::transfer(
-            &env,
-            &project.token_address,
-            &contract_address,
-            &project.owner,
-            &amount,
-        );
+            if current_balance < amount {
+                return Err(CrowdfundError::InsufficientBalance);
+            }
 
-        // Update project balance
-        env.storage()
-            .persistent()
-            .set(&balance_key, &(current_balance - amount));
+            // Transfer tokens from contract to owner
+            let contract_address = env.current_contract_address();
+            token::transfer(
+                &env,
+                &project.token_address,
+                &contract_address,
+                &project.owner,
+                &amount,
+            );
 
-        // Update project total withdrawn
-        project.total_withdrawn += amount;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Project(project_id), &project);
+            // Update project balance
+            env.storage()
+                .persistent()
+                .set(&balance_key, &(current_balance - amount));
 
-        // Emit withdraw event
-        events::WithdrawEvent {
-            owner: project.owner,
-            project_id,
-            amount,
-        }
-        .publish(&env);
+            // Update project total withdrawn
+            project.total_withdrawn += amount;
+            env.storage()
+                .persistent()
+                .set(&DataKey::Project(project_id), &project);
 
-        Ok(())
+            // Emit withdraw event
+            events::WithdrawEvent {
+                owner: project.owner,
+                project_id,
+                amount,
+            }
+            .publish(&env);
+
+            Ok(())
+        })();
+
+        reentrancy_guard::unlock(&env);
+        result
     }
 
     /// Register a new contributor
@@ -962,3 +990,6 @@ impl CrowdfundVaultContract {
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod test_reentrancy;
