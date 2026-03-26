@@ -20,4 +20,10 @@ pub enum CrowdfundError {
     RefundFailed = 14,
     ContractNotPaused = 15,
     ReentrancyDetected = 16,
+    YieldProviderNotFound = 17,
+    VotingWindowNotStarted = 18,
+    VotingWindowClosed = 19,
+    AlreadyVoted = 20,
+    InsufficientContributionToVote = 21,
+    MilestoneAlreadyApproved = 22,
 }
