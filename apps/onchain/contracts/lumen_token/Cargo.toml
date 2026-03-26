@@ -8,10 +8,10 @@ crate-type = ["lib", "cdylib"]
 doctest = false
 
 [dependencies]
-soroban-sdk = { workspace = true }
+soroban-sdk = "20.5.0"
 
 [dev-dependencies]
-soroban-sdk = { workspace = true }
+soroban-sdk = "20.5.0"
 
 [features]
 

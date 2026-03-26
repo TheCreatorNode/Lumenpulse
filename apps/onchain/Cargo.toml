@@ -11,10 +11,9 @@ members = [
 exclude = ["contracts/tests"]
 
 [workspace.dependencies]
-soroban-sdk = "20"
+soroban-sdk = "20.5.0"
 
-[patch.crates-io]
-rand_chacha = "0.3.1"
+
 
 [profile.release]
 opt-level = "z"

@@ -291,123 +291,123 @@ impl CrowdfundVaultContract {
             // Require user authorization
             user.require_auth();
 
-        // Check Emergency Pause State (single read)
-        let is_paused: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::Paused)
-            .unwrap_or(false);
-        if is_paused {
-            return Err(CrowdfundError::ContractPaused);
-        }
+            // Check Emergency Pause State (single read)
+            let is_paused: bool = env
+                .storage()
+                .instance()
+                .get(&DataKey::Paused)
+                .unwrap_or(false);
+            if is_paused {
+                return Err(CrowdfundError::ContractPaused);
+            }
 
-        // Validate amount
-        if amount <= 0 {
-            return Err(CrowdfundError::InvalidAmount);
-        }
+            // Validate amount
+            if amount <= 0 {
+                return Err(CrowdfundError::InvalidAmount);
+            }
 
-        // Get project
-        let mut project: ProjectData = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Project(project_id))
-            .ok_or(CrowdfundError::ProjectNotFound)?;
-
-        // Check if project is active
-        if !project.is_active {
-            return Err(CrowdfundError::ProjectNotActive);
-        }
-
-        // Transfer tokens from user to contract if they have sufficient balance
-        let contract_address = env.current_contract_address();
-        let user_balance = token::balance(&env, &project.token_address, &user);
-        if user_balance >= amount {
-            token::transfer(
-                &env,
-                &project.token_address,
-                &user,
-                &contract_address,
-                &amount,
-            );
-        }
-
-        // Construct balance key once and reuse
-        let balance_key = DataKey::ProjectBalance(project_id, project.token_address.clone());
-        let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&balance_key, &(current_balance + amount));
-
-        // Track individual contribution for quadratic funding
-        let contribution_key = DataKey::Contribution(project_id, user.clone());
-        let current_contribution: i128 = env
-            .storage()
-            .persistent()
-            .get(&contribution_key)
-            .unwrap_or(0);
-
-        // If this is a new contributor, add them to the contributors list
-        if current_contribution == 0 {
-            let contributor_count_key = DataKey::ContributorCount(project_id);
-            let contributor_count: u32 = env
+            // Get project
+            let mut project: ProjectData = env
                 .storage()
                 .persistent()
-                .get(&contributor_count_key)
+                .get(&DataKey::Project(project_id))
+                .ok_or(CrowdfundError::ProjectNotFound)?;
+
+            // Check if project is active
+            if !project.is_active {
+                return Err(CrowdfundError::ProjectNotActive);
+            }
+
+            // Transfer tokens from user to contract if they have sufficient balance
+            let contract_address = env.current_contract_address();
+            let user_balance = token::balance(&env, &project.token_address, &user);
+            if user_balance >= amount {
+                token::transfer(
+                    &env,
+                    &project.token_address,
+                    &user,
+                    &contract_address,
+                    &amount,
+                );
+            }
+
+            // Construct balance key once and reuse
+            let balance_key = DataKey::ProjectBalance(project_id, project.token_address.clone());
+            let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
+            env.storage()
+                .persistent()
+                .set(&balance_key, &(current_balance + amount));
+
+            // Track individual contribution for quadratic funding
+            let contribution_key = DataKey::Contribution(project_id, user.clone());
+            let current_contribution: i128 = env
+                .storage()
+                .persistent()
+                .get(&contribution_key)
                 .unwrap_or(0);
 
-            // Store contributor at index
+            // If this is a new contributor, add them to the contributors list
+            if current_contribution == 0 {
+                let contributor_count_key = DataKey::ContributorCount(project_id);
+                let contributor_count: u32 = env
+                    .storage()
+                    .persistent()
+                    .get(&contributor_count_key)
+                    .unwrap_or(0);
+
+                // Store contributor at index
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Contributor(project_id, contributor_count), &user);
+
+                // Increment contributor count
+                env.storage()
+                    .persistent()
+                    .set(&contributor_count_key, &(contributor_count + 1));
+            }
+
+            // Update contribution amount
             env.storage()
                 .persistent()
-                .set(&DataKey::Contributor(project_id, contributor_count), &user);
+                .set(&contribution_key, &(current_contribution + amount));
 
-            // Increment contributor count
+            // Update project total deposited
+            project.total_deposited += amount;
             env.storage()
                 .persistent()
-                .set(&contributor_count_key, &(contributor_count + 1));
-        }
+                .set(&DataKey::Project(project_id), &project);
 
-        // Update contribution amount
-        env.storage()
-            .persistent()
-            .set(&contribution_key, &(current_contribution + amount));
+            // Update global protocol stats
+            let mut stats: ProtocolStats = env
+                .storage()
+                .instance()
+                .get(&DataKey::ProtocolStats)
+                .unwrap_or(ProtocolStats {
+                    tvl: 0,
+                    cumulative_volume: 0,
+                });
+            stats.tvl += amount;
+            stats.cumulative_volume += amount;
+            env.storage()
+                .instance()
+                .set(&DataKey::ProtocolStats, &stats);
 
-        // Update project total deposited
-        project.total_deposited += amount;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Project(project_id), &project);
+            // Emit deposit event
+            events::DepositEvent {
+                user: user.clone(),
+                project_id,
+                amount,
+            }
+            .publish(&env);
 
-        // Update global protocol stats
-        let mut stats: ProtocolStats = env
-            .storage()
-            .instance()
-            .get(&DataKey::ProtocolStats)
-            .unwrap_or(ProtocolStats {
-                tvl: 0,
-                cumulative_volume: 0,
-            });
-        stats.tvl += amount;
-        stats.cumulative_volume += amount;
-        env.storage()
-            .instance()
-            .set(&DataKey::ProtocolStats, &stats);
+            // Notify subscribers
+            Self::notify_subscribers(
+                &env,
+                Symbol::new(&env, "deposit"),
+                (user, project_id, amount).to_xdr(&env),
+            );
 
-        // Emit deposit event
-        events::DepositEvent {
-            user: user.clone(),
-            project_id,
-            amount,
-        }
-        .publish(&env);
-
-        // Notify subscribers
-        Self::notify_subscribers(
-            &env,
-            Symbol::new(&env, "deposit"),
-            (user, project_id, amount).to_xdr(&env),
-        );
-
-        Ok(())
+            Ok(())
         })();
 
         reentrancy_guard::unlock(&env);
@@ -691,137 +691,137 @@ impl CrowdfundVaultContract {
                 return Err(CrowdfundError::NotInitialized);
             }
 
-        // Check Emergency Pause State (single read)
-        let is_paused: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::Paused)
-            .unwrap_or(false);
-        if is_paused {
-            return Err(CrowdfundError::ContractPaused);
-        }
+            // Check Emergency Pause State (single read)
+            let is_paused: bool = env
+                .storage()
+                .instance()
+                .get(&DataKey::Paused)
+                .unwrap_or(false);
+            if is_paused {
+                return Err(CrowdfundError::ContractPaused);
+            }
 
-        // Get project
-        let mut project: ProjectData = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Project(project_id))
-            .ok_or(CrowdfundError::ProjectNotFound)?;
+            // Get project
+            let mut project: ProjectData = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Project(project_id))
+                .ok_or(CrowdfundError::ProjectNotFound)?;
 
-        // Require owner authorization
-        project.owner.require_auth();
+            // Require owner authorization
+            project.owner.require_auth();
 
-        // Check if project is active
-        if !project.is_active {
-            return Err(CrowdfundError::ProjectNotActive);
-        }
+            // Check if project is active
+            if !project.is_active {
+                return Err(CrowdfundError::ProjectNotActive);
+            }
 
-        // Validate amount
-        if amount <= 0 {
-            return Err(CrowdfundError::InvalidAmount);
-        }
+            // Validate amount
+            if amount <= 0 {
+                return Err(CrowdfundError::InvalidAmount);
+            }
 
-        // Check specific milestone approval
-        let is_approved: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKey::MilestoneApproved(project_id, milestone_id))
-            .unwrap_or(false);
+            // Check specific milestone approval
+            let is_approved: bool = env
+                .storage()
+                .persistent()
+                .get(&DataKey::MilestoneApproved(project_id, milestone_id))
+                .unwrap_or(false);
 
-        if !is_approved {
-            return Err(CrowdfundError::MilestoneNotApproved);
-        }
+            if !is_approved {
+                return Err(CrowdfundError::MilestoneNotApproved);
+            }
 
-        // Construct balance key once
-        let balance_key = DataKey::ProjectBalance(project_id, project.token_address.clone());
-        let total_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
+            // Construct balance key once
+            let balance_key = DataKey::ProjectBalance(project_id, project.token_address.clone());
+            let total_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
 
-        if total_balance < amount {
-            return Err(CrowdfundError::InsufficientBalance);
-        }
+            if total_balance < amount {
+                return Err(CrowdfundError::InsufficientBalance);
+            }
 
-        // Check if we need to divest funds
-        let invested_key = DataKey::ProjectInvestedBalance(project_id);
-        let current_invested: i128 = env.storage().persistent().get(&invested_key).unwrap_or(0);
-        let local_balance = total_balance - current_invested;
+            // Check if we need to divest funds
+            let invested_key = DataKey::ProjectInvestedBalance(project_id);
+            let current_invested: i128 = env.storage().persistent().get(&invested_key).unwrap_or(0);
+            let local_balance = total_balance - current_invested;
 
-        if local_balance < amount {
-            let amount_to_divest = amount - local_balance;
-            Self::divest_funds_internal(&env, project_id, amount_to_divest)?;
-        }
+            if local_balance < amount {
+                let amount_to_divest = amount - local_balance;
+                Self::divest_funds_internal(&env, project_id, amount_to_divest)?;
+            }
 
-        let contract_address = env.current_contract_address();
+            let contract_address = env.current_contract_address();
 
-        // Calculate and deduct fee
-        let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
-        let treasury: Option<Address> = env.storage().instance().get(&DataKey::Treasury);
+            // Calculate and deduct fee
+            let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
+            let treasury: Option<Address> = env.storage().instance().get(&DataKey::Treasury);
 
-        let fee_amount = if treasury.is_some() && fee_bps > 0 {
-            (amount.checked_mul(fee_bps as i128).unwrap_or(0)) / 10_000
-        } else {
-            0
-        };
+            let fee_amount = if treasury.is_some() && fee_bps > 0 {
+                (amount.checked_mul(fee_bps as i128).unwrap_or(0)) / 10_000
+            } else {
+                0
+            };
 
-        let withdraw_amount = amount - fee_amount;
+            let withdraw_amount = amount - fee_amount;
 
-        if fee_amount > 0 {
+            if fee_amount > 0 {
+                token::transfer(
+                    &env,
+                    &project.token_address,
+                    &contract_address,
+                    &treasury.clone().unwrap(),
+                    &fee_amount,
+                );
+                events::ProtocolFeeDeductedEvent {
+                    project_id,
+                    amount: fee_amount,
+                }
+                .publish(&env);
+            }
+
+            // Transfer remaining tokens from contract to owner
             token::transfer(
                 &env,
                 &project.token_address,
                 &contract_address,
-                &treasury.clone().unwrap(),
-                &fee_amount,
+                &project.owner,
+                &withdraw_amount,
             );
-            events::ProtocolFeeDeductedEvent {
+
+            // Update project balance
+            env.storage()
+                .persistent()
+                .set(&balance_key, &(total_balance - amount));
+
+            // Update project total withdrawn
+            project.total_withdrawn += amount;
+            env.storage()
+                .persistent()
+                .set(&DataKey::Project(project_id), &project);
+
+            // Update global protocol stats - withdraw reduces TVL only
+            let mut stats: ProtocolStats = env
+                .storage()
+                .instance()
+                .get(&DataKey::ProtocolStats)
+                .unwrap_or(ProtocolStats {
+                    tvl: 0,
+                    cumulative_volume: 0,
+                });
+            stats.tvl -= amount;
+            env.storage()
+                .instance()
+                .set(&DataKey::ProtocolStats, &stats);
+
+            // Emit withdraw event
+            events::WithdrawEvent {
+                owner: project.owner,
                 project_id,
-                amount: fee_amount,
+                amount: withdraw_amount,
             }
             .publish(&env);
-        }
 
-        // Transfer remaining tokens from contract to owner
-        token::transfer(
-            &env,
-            &project.token_address,
-            &contract_address,
-            &project.owner,
-            &withdraw_amount,
-        );
-
-        // Update project balance
-        env.storage()
-            .persistent()
-            .set(&balance_key, &(total_balance - amount));
-
-        // Update project total withdrawn
-        project.total_withdrawn += amount;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Project(project_id), &project);
-
-        // Update global protocol stats - withdraw reduces TVL only
-        let mut stats: ProtocolStats = env
-            .storage()
-            .instance()
-            .get(&DataKey::ProtocolStats)
-            .unwrap_or(ProtocolStats {
-                tvl: 0,
-                cumulative_volume: 0,
-            });
-        stats.tvl -= amount;
-        env.storage()
-            .instance()
-            .set(&DataKey::ProtocolStats, &stats);
-
-        // Emit withdraw event
-        events::WithdrawEvent {
-            owner: project.owner,
-            project_id,
-            amount: withdraw_amount,
-        }
-        .publish(&env);
-
-        Ok(())
+            Ok(())
         })();
 
         reentrancy_guard::unlock(&env);

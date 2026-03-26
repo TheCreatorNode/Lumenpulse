@@ -73,7 +73,8 @@ mod reentrancy_tests {
         client.initialize(&admin);
 
         // Create project
-        let project_id = client.create_project(&owner, &symbol_short!("TEST"), &1000, &token_client.address);
+        let project_id =
+            client.create_project(&owner, &symbol_short!("TEST"), &1000, &token_client.address);
 
         // Manually lock the guard to simulate reentrancy
         reentrancy_guard::lock(&env);
@@ -96,7 +97,8 @@ mod reentrancy_tests {
 
         // Initialize and setup
         client.initialize(&admin);
-        let project_id = client.create_project(&owner, &symbol_short!("TEST"), &1000, &token_client.address);
+        let project_id =
+            client.create_project(&owner, &symbol_short!("TEST"), &1000, &token_client.address);
         client.deposit(&user, &project_id, &500);
         client.approve_milestone(&admin, &project_id);
 
@@ -121,7 +123,8 @@ mod reentrancy_tests {
 
         // Initialize and setup
         client.initialize(&admin);
-        let project_id = client.create_project(&owner, &symbol_short!("TEST"), &1000, &token_client.address);
+        let project_id =
+            client.create_project(&owner, &symbol_short!("TEST"), &1000, &token_client.address);
         client.deposit(&user, &project_id, &500);
         client.cancel_project(&owner, &project_id);
 
@@ -145,7 +148,8 @@ mod reentrancy_tests {
         let (client, admin, owner, user, token_client) = setup_test(&env);
 
         client.initialize(&admin);
-        let project_id = client.create_project(&owner, &symbol_short!("TEST"), &1000, &token_client.address);
+        let project_id =
+            client.create_project(&owner, &symbol_short!("TEST"), &1000, &token_client.address);
 
         // First deposit succeeds
         client.deposit(&user, &project_id, &100);

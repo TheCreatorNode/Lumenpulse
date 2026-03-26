@@ -69,7 +69,8 @@ mod reentrancy_tests {
 
         // Attempt create_vesting should fail
         let current_time = env.ledger().timestamp();
-        let result = client.try_create_vesting(&admin, &beneficiary, &1000, &(current_time + 100), &1000);
+        let result =
+            client.try_create_vesting(&admin, &beneficiary, &1000, &(current_time + 100), &1000);
         assert_eq!(result, Err(Ok(VestingError::ReentrancyDetected)));
 
         // Unlock and try again
@@ -90,7 +91,8 @@ mod reentrancy_tests {
         client.create_vesting(&admin, &beneficiary, &1000, &current_time, &1000);
 
         // Fast forward time
-        env.ledger().with_mut(|li| li.timestamp = current_time + 500);
+        env.ledger()
+            .with_mut(|li| li.timestamp = current_time + 500);
 
         // Manually lock the guard
         reentrancy_guard::lock(&env);
@@ -114,13 +116,14 @@ mod reentrancy_tests {
         client.initialize(&admin, &token_client.address);
 
         let current_time = env.ledger().timestamp();
-        
+
         // First create succeeds
         client.create_vesting(&admin, &beneficiary, &1000, &current_time, &1000);
 
         // Simulate nested call
         reentrancy_guard::lock(&env);
-        let result = client.try_create_vesting(&admin, &beneficiary, &1000, &(current_time + 100), &1000);
+        let result =
+            client.try_create_vesting(&admin, &beneficiary, &1000, &(current_time + 100), &1000);
         assert_eq!(result, Err(Ok(VestingError::ReentrancyDetected)));
     }
 }

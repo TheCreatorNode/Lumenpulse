@@ -9,4 +9,4 @@ crate-type = ["lib"]
 doctest = false
 
 [dependencies]
-soroban-sdk = { workspace = true }
+soroban-sdk = "20.5.0"
