@@ -57,7 +57,7 @@ fn test_upgrade_succeeds_for_admin() {
 
     let admin = Address::generate(&env);
     // Register as WASM so the deployer call has a real ledger entry.
-    let contract_id = env.register(CONTRACT_WASM, ());
+    let contract_id = env.register_contract_wasm(None, CONTRACT_WASM);
     let client = UpgradableContractClient::new(&env, &contract_id);
 
     client.init(&admin);
@@ -76,7 +76,7 @@ fn test_upgrade_emits_event() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(CONTRACT_WASM, ());
+    let contract_id = env.register_contract_wasm(None, CONTRACT_WASM);
     let client = UpgradableContractClient::new(&env, &contract_id);
 
     client.init(&admin);
@@ -157,7 +157,7 @@ fn test_set_admin_emits_event() {
 
     let admin = Address::generate(&env);
     let new_admin = Address::generate(&env);
-    let contract_id = env.register(CONTRACT_WASM, ());
+    let contract_id = env.register_contract_wasm(None, CONTRACT_WASM);
     let client = UpgradableContractClient::new(&env, &contract_id);
 
     client.init(&admin);

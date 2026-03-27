@@ -1,13 +1,11 @@
-use soroban_sdk::{contractevent, Address};
+use soroban_sdk::{Address, IntoVal, FromVal};
 
 #[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InitializedEvent {
     pub admin: Address,
 }
 
 #[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectCreatedEvent {
     #[topic]
     pub owner: Address,
@@ -17,7 +15,6 @@ pub struct ProjectCreatedEvent {
 }
 
 #[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DepositEvent {
     #[topic]
     pub user: Address,
@@ -27,7 +24,6 @@ pub struct DepositEvent {
 }
 
 #[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MilestoneApprovedEvent {
     #[topic]
     pub admin: Address,
@@ -35,7 +31,6 @@ pub struct MilestoneApprovedEvent {
 }
 
 #[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WithdrawEvent {
     #[topic]
     pub owner: Address,
@@ -45,13 +40,11 @@ pub struct WithdrawEvent {
 }
 
 #[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContributorRegisteredEvent {
     pub contributor: Address,
 }
 
 #[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReputationUpdatedEvent {
     #[topic]
     pub contributor: Address,
@@ -60,7 +53,6 @@ pub struct ReputationUpdatedEvent {
 }
 
 #[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContractPauseEvent {
     #[topic]
     pub admin: Address,
@@ -69,7 +61,6 @@ pub struct ContractPauseEvent {
 }
 
 #[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContractUnpauseEvent {
     #[topic]
     pub admin: Address,
@@ -107,7 +98,6 @@ pub struct ContributionRefundedEvent {
 }
 
 #[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtocolFeeDeductedEvent {
     #[topic]
     pub project_id: u64,
@@ -115,7 +105,6 @@ pub struct ProtocolFeeDeductedEvent {
 }
 
 #[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MilestoneVoteStartedEvent {
     #[topic]
     pub project_id: u64,
@@ -124,7 +113,6 @@ pub struct MilestoneVoteStartedEvent {
 }
 
 #[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeConfigChangedEvent {
     #[topic]
     pub admin: Address,
@@ -133,7 +121,6 @@ pub struct FeeConfigChangedEvent {
 }
 
 #[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VoteCastEvent {
     #[topic]
     pub project_id: u64,
@@ -144,7 +131,6 @@ pub struct VoteCastEvent {
 }
 
 #[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MilestoneApprovedByVoteEvent {
     #[topic]
     pub project_id: u64,
