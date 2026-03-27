@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, IntoVal, FromVal};
+use soroban_sdk::{Address, FromVal, IntoVal};
 
 #[contractevent]
 pub struct InitializedEvent {
