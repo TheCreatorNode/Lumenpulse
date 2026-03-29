@@ -15,6 +15,8 @@ import { StellarModule } from './stellar/stellar.module';
 import { PriceModule } from './price/price.module';
 import { WebhookModule } from './webhook/webhook.module';
 import { NotificationModule } from './notification/notification.module';
+import { QueueModule } from './queue/queue.module';
+import { StellarSyncModule } from './stellar-sync/stellar-sync.module';
 
 import databaseConfig from './database/database.config';
 import stellarConfig from './stellar/config/stellar.config';
@@ -44,6 +46,8 @@ import { TestController } from './test/test.controller';
     PriceModule,
     NotificationModule,
     WebhookModule,
+    QueueModule,
+    StellarSyncModule,
   ],
   controllers: [AppController, TestController, TestExceptionController],
   providers: [
