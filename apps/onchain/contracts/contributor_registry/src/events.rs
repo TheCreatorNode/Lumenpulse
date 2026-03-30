@@ -1,73 +1,33 @@
-use soroban_sdk::{contractevent, Address, BytesN, String};
+use soroban_sdk::{Address, BytesN, Env, String, symbol_short};
 
-use crate::multisig::{ProposalAction, ProposalStatus};
-
-#[contractevent]
-pub struct UpgradedEvent {
-    #[topic]
-    pub admin: Address,
-    pub new_wasm_hash: BytesN<32>,
+pub fn upgraded_event(env: &Env, admin: Address, new_wasm_hash: BytesN<32>) {
+    env.events().publish((symbol_short!("upgraded"), admin), new_wasm_hash);
 }
 
-#[contractevent]
-pub struct AdminChangedEvent {
-    #[topic]
-    pub old_admin: Address,
-    pub new_admin: Address,
+pub fn admin_changed_event(env: &Env, old_admin: Address, new_admin: Address) {
+    env.events().publish((symbol_short!("admin_chg"), old_admin), new_admin);
 }
 
-#[contractevent]
-pub struct ProposalCreatedEvent {
-    #[topic]
-    pub proposal_id: u64,
-    pub proposer: Address,
-    pub action: ProposalAction,
-    pub weight_collected: u32,
-    pub threshold: u32,
+pub fn multisig_configured_event(env: &Env, configured_by: Address, threshold: u32, signer_count: u32) {
+    env.events().publish((symbol_short!("multisig"), configured_by), (threshold, signer_count));
 }
 
-#[contractevent]
-pub struct SignatureCollectedEvent {
-    #[topic]
-    pub proposal_id: u64,
-    pub signer: Address,
-    pub weight_collected: u32,
-    pub threshold: u32,
-    pub status: ProposalStatus,
+pub fn gasless_registration_event(env: &Env, contributor: Address, github_handle: String, consumed_nonce: u64) {
+    env.events().publish((symbol_short!("gasless"), contributor), (github_handle, consumed_nonce));
 }
 
-#[contractevent]
-pub struct ProposalExecutedEvent {
-    #[topic]
-    pub proposal_id: u64,
-    pub executor: Address,
-    pub action: ProposalAction,
+pub fn proposal_created_event(env: &Env, proposal_id: u64, proposer: Address) {
+    env.events().publish((symbol_short!("prop_cr"), proposer), proposal_id);
 }
 
-#[contractevent]
-pub struct ProposalCancelledEvent {
-    #[topic]
-    pub proposal_id: u64,
-    pub cancelled_by: Address,
+pub fn proposal_executed_event(env: &Env, proposal_id: u64, executor: Address) {
+    env.events().publish((symbol_short!("prop_ex"), executor), proposal_id);
 }
 
-#[contractevent]
-pub struct MultisigConfiguredEvent {
-    #[topic]
-    pub configured_by: Address,
-    pub threshold: u32,
-    pub signer_count: u32,
+pub fn proposal_cancelled_event(env: &Env, proposal_id: u64, cancelled_by: Address) {
+    env.events().publish((symbol_short!("prop_can"), cancelled_by), proposal_id);
 }
 
-/// Emitted when a contributor is registered via a gasless (relayer-submitted)
-/// meta-transaction.  Relayers and indexers can use this to track gasless
-/// registrations separately from direct ones.
-#[contractevent]
-pub struct GaslessRegistrationEvent {
-    #[topic]
-    pub contributor: Address,
-    pub github_handle: String,
-    /// The nonce that was consumed by this registration.  The next valid nonce
-    /// for this address is `consumed_nonce + 1`.
-    pub consumed_nonce: u64,
+pub fn signature_collected_event(env: &Env, proposal_id: u64, signer: Address, weight_collected: u32) {
+    env.events().publish((symbol_short!("sig_col"), signer), (proposal_id, weight_collected));
 }

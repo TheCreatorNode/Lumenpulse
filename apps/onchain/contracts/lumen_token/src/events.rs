@@ -1,24 +1,13 @@
-use soroban_sdk::{contractevent, Address, BytesN};
+use soroban_sdk::{Address, BytesN, Env, String, symbol_short};
 
-/// Emitted when the contract WASM is upgraded to a new hash.
-#[contractevent]
-pub struct UpgradedEvent {
-    #[topic]
-    pub admin: Address,
-    pub new_wasm_hash: BytesN<32>,
+pub fn upgraded_event(env: &Env, admin: Address, new_wasm_hash: BytesN<32>) {
+    env.events().publish((symbol_short!("upgraded"), admin), new_wasm_hash);
 }
 
-/// Emitted when the admin role is transferred to a new address.
-#[contractevent]
-pub struct AdminChangedEvent {
-    #[topic]
-    pub old_admin: Address,
-    pub new_admin: Address,
+pub fn admin_changed_event(env: &Env, old_admin: Address, new_admin: Address) {
+    env.events().publish((symbol_short!("admin_chg"), old_admin), new_admin);
 }
 
-#[contractevent]
-pub struct BurnEvent {
-    #[topic]
-    pub from: Address,
-    pub amount: i128,
+pub fn burn_event(env: &Env, from: Address, amount: i128) {
+    env.events().publish((symbol_short!("burn"), from), amount);
 }

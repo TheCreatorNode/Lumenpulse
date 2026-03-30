@@ -1,138 +1,73 @@
-use soroban_sdk::{Address, FromVal, IntoVal};
+use soroban_sdk::{Address, BytesN, Env, symbol_short};
 
-#[contractevent]
-pub struct InitializedEvent {
-    pub admin: Address,
+pub fn initialized_event(env: &Env, admin: Address) {
+    env.events().publish((symbol_short!("init"),), admin);
 }
 
-#[contractevent]
-pub struct ProjectCreatedEvent {
-    #[topic]
-    pub owner: Address,
-    #[topic]
-    pub token_address: Address,
-    pub project_id: u64,
+pub fn project_created_event(env: &Env, owner: Address, token_address: Address, project_id: u64) {
+    env.events().publish((symbol_short!("proj_cr"), owner), (token_address, project_id));
 }
 
-#[contractevent]
-pub struct DepositEvent {
-    #[topic]
-    pub user: Address,
-    #[topic]
-    pub project_id: u64,
-    pub amount: i128,
+pub fn project_canceled_event(env: &Env, project_id: u64, caller: Address) {
+    env.events().publish((symbol_short!("proj_can"), caller), project_id);
 }
 
-#[contractevent]
-pub struct MilestoneApprovedEvent {
-    #[topic]
-    pub admin: Address,
-    pub project_id: u64,
+pub fn contribution_refunded_event(env: &Env, project_id: u64, contributor: Address, amount: i128) {
+    env.events().publish((symbol_short!("refund"), contributor), (project_id, amount));
 }
 
-#[contractevent]
-pub struct WithdrawEvent {
-    #[topic]
-    pub owner: Address,
-    #[topic]
-    pub project_id: u64,
-    pub amount: i128,
+pub fn deposit_event(env: &Env, user: Address, project_id: u64, amount: i128) {
+    env.events().publish((symbol_short!("deposit"), user), (project_id, amount));
 }
 
-#[contractevent]
-pub struct ContributorRegisteredEvent {
-    pub contributor: Address,
+pub fn milestone_approved_event(env: &Env, admin: Address, project_id: u64) {
+    env.events().publish((symbol_short!("mile_ap"), admin), project_id);
 }
 
-#[contractevent]
-pub struct ReputationUpdatedEvent {
-    #[topic]
-    pub contributor: Address,
-    pub old_reputation: i128,
-    pub new_reputation: i128,
+pub fn milestone_vote_started_event(env: &Env, project_id: u64, milestone_id: u32, end_time: u64) {
+    env.events().publish((symbol_short!("vote_st"),), (project_id, milestone_id, end_time));
 }
 
-#[contractevent]
-pub struct ContractPauseEvent {
-    #[topic]
-    pub admin: Address,
-    pub paused: bool,
-    pub timestamp: u64,
+pub fn vote_cast_event(env: &Env, project_id: u64, milestone_id: u32, voter: Address, vote: bool, weight: i128) {
+    env.events().publish((symbol_short!("vote"), voter), (project_id, milestone_id, vote, weight));
 }
 
-#[contractevent]
-pub struct ContractUnpauseEvent {
-    #[topic]
-    pub admin: Address,
-    pub paused: bool,
-    pub timestamp: u64,
+pub fn milestone_approved_by_vote_event(env: &Env, project_id: u64, milestone_id: u32) {
+    env.events().publish((symbol_short!("mile_vt"),), (project_id, milestone_id));
 }
 
-/// Emitted when the contract WASM is upgraded to a new hash.
-#[contractevent]
-pub struct UpgradedEvent {
-    #[topic]
-    pub admin: Address,
-    pub new_wasm_hash: soroban_sdk::BytesN<32>,
+pub fn protocol_fee_deducted_event(env: &Env, project_id: u64, amount: i128) {
+    env.events().publish((symbol_short!("fee"),), (project_id, amount));
 }
 
-/// Emitted when the admin role is transferred to a new address.
-#[contractevent]
-pub struct AdminChangedEvent {
-    #[topic]
-    pub old_admin: Address,
-    pub new_admin: Address,
+pub fn withdraw_event(env: &Env, owner: Address, project_id: u64, amount: i128) {
+    env.events().publish((symbol_short!("withdraw"), owner), (project_id, amount));
 }
 
-#[contractevent]
-pub struct ProjectCanceledEvent {
-    pub project_id: u64,
-    pub caller: Address,
+pub fn contributor_registered_event(env: &Env, contributor: Address) {
+    env.events().publish((symbol_short!("contrib"),), contributor);
 }
 
-#[contractevent]
-pub struct ContributionRefundedEvent {
-    pub project_id: u64,
-    pub contributor: Address,
-    pub amount: i128,
+pub fn reputation_updated_event(env: &Env, contributor: Address, old_reputation: i128, new_reputation: i128) {
+    env.events().publish((symbol_short!("rep_upd"), contributor), (old_reputation, new_reputation));
 }
 
-#[contractevent]
-pub struct ProtocolFeeDeductedEvent {
-    #[topic]
-    pub project_id: u64,
-    pub amount: i128,
+pub fn contract_pause_event(env: &Env, admin: Address, paused: bool, timestamp: u64) {
+    env.events().publish((symbol_short!("pause"), admin), (paused, timestamp));
 }
 
-#[contractevent]
-pub struct MilestoneVoteStartedEvent {
-    #[topic]
-    pub project_id: u64,
-    pub milestone_id: u32,
-    pub end_time: u64,
+pub fn contract_unpause_event(env: &Env, admin: Address, paused: bool, timestamp: u64) {
+    env.events().publish((symbol_short!("unpause"), admin), (paused, timestamp));
 }
 
-#[contractevent]
-pub struct FeeConfigChangedEvent {
-    #[topic]
-    pub admin: Address,
-    pub fee_bps: u32,
-    pub treasury: Address,
+pub fn fee_config_changed_event(env: &Env, admin: Address, fee_bps: u32, treasury: Address) {
+    env.events().publish((symbol_short!("fee_cfg"), admin), (fee_bps, treasury));
 }
 
-#[contractevent]
-pub struct VoteCastEvent {
-    #[topic]
-    pub project_id: u64,
-    pub milestone_id: u32,
-    pub voter: Address,
-    pub weight: i128,
-    pub support: bool,
+pub fn upgraded_event(env: &Env, admin: Address, new_wasm_hash: BytesN<32>) {
+    env.events().publish((symbol_short!("upgraded"), admin), new_wasm_hash);
 }
 
-#[contractevent]
-pub struct MilestoneApprovedByVoteEvent {
-    #[topic]
-    pub project_id: u64,
-    pub milestone_id: u32,
+pub fn admin_changed_event(env: &Env, old_admin: Address, new_admin: Address) {
+    env.events().publish((symbol_short!("admin_chg"), old_admin), new_admin);
 }

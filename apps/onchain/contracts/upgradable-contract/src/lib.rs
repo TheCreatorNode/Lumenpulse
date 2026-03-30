@@ -2,7 +2,6 @@
 
 mod events;
 
-use events::{AdminChangedEvent, UpgradedEvent};
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env};
 
 /// Storage key enumeration for instance-level state.
@@ -50,11 +49,7 @@ impl UpgradableContract {
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
 
-        UpgradedEvent {
-            admin: caller,
-            new_wasm_hash,
-        }
-        .publish(&env);
+        events::upgraded_event(&env, caller, new_wasm_hash);
     }
 
     /// Transfer the admin role to `new_admin`.
@@ -76,11 +71,7 @@ impl UpgradableContract {
 
         env.storage().instance().set(&DataKey::Admin, &new_admin);
 
-        AdminChangedEvent {
-            old_admin: current_admin,
-            new_admin,
-        }
-        .publish(&env);
+        events::admin_changed_event(&env, current_admin, new_admin);
     }
 
     /// Return the current admin address.

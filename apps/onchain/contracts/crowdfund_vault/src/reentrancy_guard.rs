@@ -1,6 +1,6 @@
-use soroban_sdk::{Env, Symbol};
+use soroban_sdk::{Env, Symbol, symbol_short};
 
-const GUARD_KEY: Symbol = Symbol::short("GUARD");
+const GUARD_KEY: Symbol = symbol_short!("GUARD");
 
 pub fn lock(env: &Env) -> bool {
     if env.storage().instance().has(&GUARD_KEY) {

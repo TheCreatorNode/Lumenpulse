@@ -1,9 +1,7 @@
 use soroban_sdk::{contracttype, Address, Env, Vec};
 
 use crate::errors::ContributorError;
-use crate::events::{
-    ProposalCancelledEvent, ProposalCreatedEvent, ProposalExecutedEvent, SignatureCollectedEvent,
-};
+use crate::events;
 use crate::storage::DataKey;
 
 // ── Constants ────────────────────────────────────────────────
@@ -177,14 +175,7 @@ pub(crate) fn propose(
         .instance()
         .set(&DataKey::Proposal(id), &proposal);
 
-    ProposalCreatedEvent {
-        proposal_id: id,
-        proposer,
-        action,
-        weight_collected,
-        threshold: config.threshold,
-    }
-    .publish(env);
+    events::proposal_created_event(env, id, proposer);
 
     Ok(id)
 }
@@ -219,14 +210,7 @@ pub(crate) fn sign(
         .instance()
         .set(&DataKey::Proposal(proposal_id), &proposal);
 
-    SignatureCollectedEvent {
-        proposal_id,
-        signer: signer_addr,
-        weight_collected: proposal.weight_collected,
-        threshold: config.threshold,
-        status: proposal.status,
-    }
-    .publish(env);
+    events::signature_collected_event(env, proposal_id, signer_addr, proposal.weight_collected);
 
     Ok(proposal.status)
 }
@@ -258,12 +242,7 @@ pub(crate) fn consume_approval(
         .instance()
         .set(&DataKey::Proposal(proposal_id), &proposal);
 
-    ProposalExecutedEvent {
-        proposal_id,
-        executor: executor.clone(),
-        action: expected_action.clone(),
-    }
-    .publish(env);
+    events::proposal_executed_event(env, proposal_id, executor.clone());
 
     Ok(())
 }
@@ -290,11 +269,7 @@ pub(crate) fn cancel(
         .instance()
         .set(&DataKey::Proposal(proposal_id), &proposal);
 
-    ProposalCancelledEvent {
-        proposal_id,
-        cancelled_by: signer_addr,
-    }
-    .publish(env);
+    events::proposal_cancelled_event(env, proposal_id, signer_addr);
 
     Ok(())
 }

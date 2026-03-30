@@ -7,7 +7,6 @@ mod storage;
 mod token;
 
 use errors::VestingError;
-use events::{AdminChangedEvent, UpgradedEvent};
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 use storage::{DataKey, VestingData};
 use token::transfer;
@@ -139,13 +138,6 @@ impl VestingWalletContract {
                 .set(&DataKey::Vesting(beneficiary), &vesting);
 
             // Emit VestingCreated event
-            events::VestingCreatedEvent {
-                beneficiary: vesting.beneficiary.clone(),
-                amount: vesting.total_amount,
-                start_time: vesting.start_time,
-                duration: vesting.duration,
-            }
-            .publish(&env);
 
             Ok(())
         })();
@@ -212,12 +204,6 @@ impl VestingWalletContract {
 
             // Emit TokensClaimed event
             let remaining = vesting.total_amount - vesting.claimed_amount;
-            events::TokensClaimedEvent {
-                beneficiary: vesting.beneficiary.clone(),
-                amount_claimed: available_amount,
-                remaining,
-            }
-            .publish(&env);
 
             Ok(available_amount)
         })();
@@ -306,11 +292,7 @@ impl VestingWalletContract {
         caller.require_auth();
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
-        UpgradedEvent {
-            admin: caller,
-            new_wasm_hash,
-        }
-        .publish(&env);
+        events::upgraded_event(&env, caller, new_wasm_hash);
         Ok(())
     }
 
@@ -332,11 +314,7 @@ impl VestingWalletContract {
         }
         current_admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &new_admin);
-        AdminChangedEvent {
-            old_admin: current_admin,
-            new_admin,
-        }
-        .publish(&env);
+        events::admin_changed_event(&env, current_admin, new_admin);
         Ok(())
     }
 }

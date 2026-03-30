@@ -6,7 +6,6 @@ mod multisig;
 mod storage;
 
 use errors::ContributorError;
-use events::{AdminChangedEvent, GaslessRegistrationEvent, MultisigConfiguredEvent, UpgradedEvent};
 use multisig::{
     cancel, consume_approval, expire, get_config, get_proposal, propose, sign, validate_config,
     MultisigConfig, ProposalAction, ProposalStatus, Signer,
@@ -119,12 +118,7 @@ impl ContributorRegistryContract {
             .instance()
             .set(&DataKey::NextProposalId, &0u64);
 
-        MultisigConfiguredEvent {
-            configured_by: bootstrapper.address.clone(),
-            threshold,
-            signer_count: signers.len(), // no cast needed, already u32 in Soroban Vec
-        }
-        .publish(&env);
+        events::multisig_configured_event(&env, bootstrapper.address.clone(), threshold, signers.len() as u32);
 
         Ok(())
     }
@@ -178,12 +172,7 @@ impl ContributorRegistryContract {
             .instance()
             .set(&DataKey::MultisigConfig, &config);
 
-        MultisigConfiguredEvent {
-            configured_by: executor,
-            threshold: new_threshold,
-            signer_count: new_signers.len(), // no cast needed
-        }
-        .publish(&env);
+        events::multisig_configured_event(&env, executor, new_threshold, new_signers.len() as u32);
 
         Ok(())
     }
@@ -260,12 +249,7 @@ impl ContributorRegistryContract {
             .persistent()
             .set(&DataKey::RegistrationNonce(address.clone()), &new_nonce);
 
-        GaslessRegistrationEvent {
-            contributor: address,
-            github_handle,
-            consumed_nonce: nonce,
-        }
-        .publish(&env);
+        events::gasless_registration_event(&env, address, github_handle, nonce);
 
         Ok(())
     }
@@ -353,11 +337,7 @@ impl ContributorRegistryContract {
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
 
-        UpgradedEvent {
-            admin: executor,
-            new_wasm_hash,
-        }
-        .publish(&env);
+        events::upgraded_event(&env, executor, new_wasm_hash);
 
         Ok(())
     }
@@ -372,11 +352,7 @@ impl ContributorRegistryContract {
 
         env.storage().instance().set(&DataKey::Admin, &new_admin);
 
-        AdminChangedEvent {
-            old_admin: executor,
-            new_admin,
-        }
-        .publish(&env);
+        events::admin_changed_event(&env, executor, new_admin);
 
         Ok(())
     }

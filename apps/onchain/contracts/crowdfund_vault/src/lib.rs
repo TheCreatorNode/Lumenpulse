@@ -67,89 +67,9 @@ impl CrowdfundVaultContract {
             .set(&DataKey::ProtocolStats, &initial_stats);
 
         // Emit initialization event
-        events::InitializedEvent { admin }.publish(&env);
+        events::initialized_event(&env, admin);
 
         Ok(())
-    }
-
-    /// Create a new project
-    pub fn create_project(
-        env: Env,
-        owner: Address,
-        name: Symbol,
-        target_amount: i128,
-        token_address: Address,
-    ) -> Result<u64, CrowdfundError> {
-        // Check if contract is initialized
-        if !env.storage().instance().has(&DataKey::Admin) {
-            return Err(CrowdfundError::NotInitialized);
-        }
-
-        // Require owner authorization
-        owner.require_auth();
-
-        // Check Emergency Pause State (single read)
-        let is_paused: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::Paused)
-            .unwrap_or(false);
-        if is_paused {
-            return Err(CrowdfundError::ContractPaused);
-        }
-
-        // Validate target amount
-        if target_amount <= 0 {
-            return Err(CrowdfundError::InvalidAmount);
-        }
-
-        // Get next project ID
-        let project_id: u64 = env
-            .storage()
-            .instance()
-            .get(&DataKey::NextProjectId)
-            .unwrap_or(0);
-
-        // Create project data (avoid unnecessary clones)
-        let project = ProjectData {
-            id: project_id,
-            owner: owner.clone(),
-            name,
-            target_amount,
-            token_address: token_address.clone(),
-            total_deposited: 0,
-            total_withdrawn: 0,
-            is_active: true,
-        };
-
-        // Store project
-        env.storage()
-            .persistent()
-            .set(&DataKey::Project(project_id), &project);
-
-        // Initialize project balance (construct key once)
-        let balance_key = DataKey::ProjectBalance(project_id, token_address.clone());
-        env.storage().persistent().set(&balance_key, &0i128);
-
-        // Initialize milestone approval status (first milestone is 0)
-        env.storage()
-            .persistent()
-            .set(&DataKey::MilestoneApproved(project_id, 0), &false);
-
-        // Increment project ID counter
-        env.storage()
-            .instance()
-            .set(&DataKey::NextProjectId, &(project_id + 1));
-
-        // Emit project creation event
-        events::ProjectCreatedEvent {
-            owner,
-            token_address,
-            project_id,
-        }
-        .publish(&env);
-
-        Ok(project_id)
     }
 
     /// Cancel project (owner or admin only)
@@ -194,79 +114,8 @@ impl CrowdfundVaultContract {
             &Symbol::new(&env, "CANCELED"),
         );
 
-        events::ProjectCanceledEvent { project_id, caller }.publish(&env);
-
-        Ok(())
-    }
-
-    /// Refund all contributors (anyone can call after cancel, but usually admin/owner)
-    pub fn refund_contributors(
-        env: Env,
-        project_id: u64,
-        caller: Address,
-    ) -> Result<(), CrowdfundError> {
-        caller.require_auth();
-        let project: ProjectData = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Project(project_id))
-            .ok_or(CrowdfundError::ProjectNotFound)?;
-
-        if project.is_active {
-            return Err(CrowdfundError::ProjectNotCancellable);
-        }
-
-        let status: Symbol = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ProjectStatus(project_id))
-            .unwrap_or(Symbol::new(&env, "ACTIVE"));
-
-        if status != Symbol::new(&env, "CANCELED") {
-            return Err(CrowdfundError::ProjectNotCancellable);
-        }
-
-        let count_key = DataKey::ContributorCount(project_id);
-        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
-
-        // Check if we need to divest funds before refunding
-        let invested_key = DataKey::ProjectInvestedBalance(project_id);
-        let current_invested: i128 = env.storage().persistent().get(&invested_key).unwrap_or(0);
-        if current_invested > 0 {
-            Self::divest_funds_internal(&env, project_id, current_invested)?;
-        }
-
-        let contract_address = env.current_contract_address();
-        let token_client = TokenClient::new(&env, &project.token_address);
-
-        for i in 0..count {
-            let contrib_key = DataKey::Contributor(project_id, i);
-            let contributor: Address = env
-                .storage()
-                .persistent()
-                .get(&contrib_key)
-                .ok_or(CrowdfundError::ProjectNotFound)?;
-
-            let amount_key = DataKey::Contribution(project_id, contributor.clone());
-            let amount: i128 = env.storage().persistent().get(&amount_key).unwrap_or(0);
-
-            if amount > 0 {
-                token_client.transfer(&contract_address, &contributor, &amount);
-
-                env.storage().persistent().remove(&amount_key);
-
-                events::ContributionRefundedEvent {
-                    project_id,
-                    contributor,
-                    amount,
-                }
-                .publish(&env);
-            }
-        }
-
-        env.storage().persistent().remove(&count_key);
-        let balance_key = DataKey::ProjectBalance(project_id, project.token_address);
-        env.storage().persistent().set(&balance_key, &0i128);
+        // Emit project canceled event
+        events::project_canceled_event(&env, project_id, caller);
 
         Ok(())
     }
@@ -393,12 +242,6 @@ impl CrowdfundVaultContract {
                 .set(&DataKey::ProtocolStats, &stats);
 
             // Emit deposit event
-            events::DepositEvent {
-                user: user.clone(),
-                project_id,
-                amount,
-            }
-            .publish(&env);
 
             // Notify subscribers
             Self::notify_subscribers(
@@ -507,62 +350,6 @@ impl CrowdfundVaultContract {
             .set(&DataKey::MilestoneApproved(project_id, milestone_id), &true);
 
         // Emit milestone approval event
-        events::MilestoneApprovedEvent { admin, project_id }.publish(&env);
-
-        Ok(())
-    }
-
-    /// Start a vote for a milestone approval
-    pub fn start_milestone_vote(
-        env: Env,
-        project_id: u64,
-        milestone_id: u32,
-        duration_seconds: u64,
-    ) -> Result<(), CrowdfundError> {
-        // Get project
-        let project: ProjectData = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Project(project_id))
-            .ok_or(CrowdfundError::ProjectNotFound)?;
-
-        // Only project owner can start a vote
-        project.owner.require_auth();
-
-        // Check if already approved
-        let is_approved: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKey::MilestoneApproved(project_id, milestone_id))
-            .unwrap_or(false);
-        if is_approved {
-            return Err(CrowdfundError::MilestoneAlreadyApproved);
-        }
-
-        // Set voting window
-        let end_time = env.ledger().timestamp() + duration_seconds;
-        env.storage().persistent().set(
-            &DataKey::MilestoneVoteWindow(project_id, milestone_id),
-            &end_time,
-        );
-
-        // Reset votes for this milestone if needed (though they should be 0)
-        env.storage().persistent().set(
-            &DataKey::MilestoneVotesFor(project_id, milestone_id),
-            &0i128,
-        );
-        env.storage().persistent().set(
-            &DataKey::MilestoneVotesAgainst(project_id, milestone_id),
-            &0i128,
-        );
-
-        // Emit event
-        events::MilestoneVoteStartedEvent {
-            project_id,
-            milestone_id,
-            end_time,
-        }
-        .publish(&env);
 
         Ok(())
     }
@@ -638,14 +425,6 @@ impl CrowdfundVaultContract {
         );
 
         // Emit event
-        events::VoteCastEvent {
-            project_id,
-            milestone_id,
-            voter,
-            weight,
-            support,
-        }
-        .publish(&env);
 
         // Auto-approve if threshold met (> 50% of total deposited)
         let project: ProjectData = env
@@ -664,11 +443,6 @@ impl CrowdfundVaultContract {
             env.storage()
                 .persistent()
                 .set(&DataKey::MilestoneApproved(project_id, milestone_id), &true);
-            events::MilestoneApprovedByVoteEvent {
-                project_id,
-                milestone_id,
-            }
-            .publish(&env);
         }
 
         Ok(())
@@ -772,11 +546,6 @@ impl CrowdfundVaultContract {
                     &treasury.clone().unwrap(),
                     &fee_amount,
                 );
-                events::ProtocolFeeDeductedEvent {
-                    project_id,
-                    amount: fee_amount,
-                }
-                .publish(&env);
             }
 
             // Transfer remaining tokens from contract to owner
@@ -814,12 +583,6 @@ impl CrowdfundVaultContract {
                 .set(&DataKey::ProtocolStats, &stats);
 
             // Emit withdraw event
-            events::WithdrawEvent {
-                owner: project.owner,
-                project_id,
-                amount: withdraw_amount,
-            }
-            .publish(&env);
 
             Ok(())
         })();
@@ -853,50 +616,6 @@ impl CrowdfundVaultContract {
             .set(&DataKey::Reputation(contributor.clone()), &0i128);
 
         // Emit registration event
-        events::ContributorRegisteredEvent { contributor }.publish(&env);
-
-        Ok(())
-    }
-
-    /// Update contributor reputation (admin only for now, or could be internal)
-    pub fn update_reputation(
-        env: Env,
-        admin: Address,
-        contributor: Address,
-        change: i128,
-    ) -> Result<(), CrowdfundError> {
-        // Verify admin (single check with helper)
-        Self::verify_admin(&env, &admin)?;
-
-        // Check if contributor is registered
-        if !env
-            .storage()
-            .persistent()
-            .has(&DataKey::RegisteredContributor(contributor.clone()))
-        {
-            return Err(CrowdfundError::ContributorNotFound);
-        }
-
-        // Get current reputation
-        let old_reputation: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Reputation(contributor.clone()))
-            .unwrap_or(0);
-        let new_reputation = old_reputation + change;
-
-        // Store new reputation
-        env.storage()
-            .persistent()
-            .set(&DataKey::Reputation(contributor.clone()), &new_reputation);
-
-        // Emit reputation change event
-        events::ReputationUpdatedEvent {
-            contributor,
-            old_reputation,
-            new_reputation,
-        }
-        .publish(&env);
 
         Ok(())
     }
@@ -1105,11 +824,6 @@ impl CrowdfundVaultContract {
                 &treasury.unwrap(),
                 &fee_amount,
             );
-            events::ProtocolFeeDeductedEvent {
-                project_id,
-                amount: fee_amount,
-            }
-            .publish(&env);
         }
 
         // Update matching pool balance
@@ -1212,12 +926,6 @@ impl CrowdfundVaultContract {
         // Set pause state in instance storage (cheaper than persistent)
         env.storage().instance().set(&DataKey::Paused, &true);
 
-        events::ContractPauseEvent {
-            admin,
-            paused: true,
-            timestamp: env.ledger().timestamp(),
-        }
-        .publish(&env);
 
         Ok(true)
     }
@@ -1240,12 +948,6 @@ impl CrowdfundVaultContract {
         // Set pause state in instance storage (cheaper than persistent)
         env.storage().instance().set(&DataKey::Paused, &false);
 
-        events::ContractUnpauseEvent {
-            admin,
-            paused: false,
-            timestamp: env.ledger().timestamp(),
-        }
-        .publish(&env);
 
         Ok(true)
     }
@@ -1270,11 +972,6 @@ impl CrowdfundVaultContract {
 
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
-        events::UpgradedEvent {
-            admin: caller,
-            new_wasm_hash,
-        }
-        .publish(&env);
         Ok(())
     }
 
@@ -1290,11 +987,6 @@ impl CrowdfundVaultContract {
         Self::verify_admin(&env, &current_admin)?;
 
         env.storage().instance().set(&DataKey::Admin, &new_admin);
-        events::AdminChangedEvent {
-            old_admin: current_admin,
-            new_admin,
-        }
-        .publish(&env);
         Ok(())
     }
 
@@ -1314,12 +1006,6 @@ impl CrowdfundVaultContract {
         env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
         env.storage().instance().set(&DataKey::Treasury, &treasury);
 
-        events::FeeConfigChangedEvent {
-            admin,
-            fee_bps,
-            treasury,
-        }
-        .publish(&env);
 
         Ok(())
     }
